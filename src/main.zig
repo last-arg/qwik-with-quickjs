@@ -8,11 +8,103 @@ const c = @cImport({
 const qwik = @import("qwik_render");
 
 pub fn main() anyerror!void {
-    var sol1 = try Solution1.init();
-    defer sol1.deinit();
-    const result = try sol1.getHtmlString();
-    printValue(sol1.ctx, result);
+    {
+        var sol1 = try SolutionJsFile.init();
+        defer sol1.deinit();
+    }
+
+    // {
+    //     var sol1 = try Solution1.init();
+    //     defer sol1.deinit();
+    //     // const html = try sol1.getHtmlString();
+    //     // printValue(sol1.ctx, html);
+    // }
 }
+
+const SolutionJsFile = struct {
+    runtime: *c.JSRuntime,
+    ctx: *c.JSContext,
+
+    const Self = @This();
+
+    pub fn init() !Self {
+        const rt = c.JS_NewRuntime() orelse {
+            return error.FailedToCreateJSRuntime;
+        };
+        // NOTE: '0' sets stack size to unlimited
+        c.JS_SetMaxStackSize(rt, 0);
+        c.js_std_set_worker_new_context_func(JS_NewCustomContext);
+        c.js_std_init_handlers(rt);
+
+        const ctx = JS_NewCustomContext(rt) orelse {
+            return error.FailedToCreateJSContext;
+        };
+
+        // This resolves other JS imports
+        c.JS_SetModuleLoaderFunc(rt, null, c.js_module_loader, null);
+        c.JS_SetHostPromiseRejectionTracker(rt, c.js_std_promise_rejection_tracker, null);
+        c.js_std_add_helpers(ctx, 0, null);
+
+        // {
+        //     const std_os_str: [:0]const u8 =
+        //         \\import * as std from 'std';
+        //         \\import * as os from 'os';
+        //         \\globalThis.std = std;
+        //         \\globalThis.os = os;
+        //         \\
+        //     ;
+        //     const name: [:0]const u8 = "<input>";
+        //     try evalBuf(ctx, std_os_str, name, c.JS_EVAL_TYPE_MODULE);
+        // }
+
+        {
+            var len: usize = 0;
+            const filename: [:0]const u8 = "./tmp/src/test_server_v1.mjs";
+            const c_buf = c.js_load_file(ctx, &len, filename);
+            const buf: [:0]const u8 = c_buf[0..len :0];
+
+            try evalBuf(ctx, buf, filename, c.JS_EVAL_TYPE_MODULE);
+        }
+
+        c.js_std_loop(ctx);
+        printException(ctx);
+
+        return Self{ .runtime = rt, .ctx = ctx };
+    }
+
+    fn evalBuf(ctx: *c.JSContext, buf: [:0]const u8, filename: [:0]const u8, eval_flags: c_int) !void {
+        var val: c.JSValue = undefined;
+        defer c.JS_FreeValue(ctx, val);
+
+        if ((eval_flags & c.JS_EVAL_TYPE_MASK) == c.JS_EVAL_TYPE_MODULE) {
+            // for the modules, we compile then run to be able to set
+            // import.meta
+            val = c.JS_Eval(ctx, buf.ptr, buf.len, filename, eval_flags | c.JS_EVAL_FLAG_COMPILE_ONLY);
+            if (val.tag != c.JS_TAG_EXCEPTION) {
+                _ = c.js_module_set_import_meta(ctx, val, 1, 1);
+                val = c.JS_EvalFunction(ctx, val);
+            }
+        } else {
+            val = c.JS_Eval(ctx, buf.ptr, buf.len, filename, eval_flags);
+        }
+        if (val.tag == c.JS_TAG_EXCEPTION) {
+            c.js_std_dump_error(ctx);
+            return error.EvalBufException;
+        }
+    }
+
+    pub fn deinit(self: *Self) void {
+        c.JS_FreeContext(self.ctx);
+        c.JS_FreeRuntime(self.runtime);
+    }
+
+    fn JS_NewCustomContext(rt: ?*c.JSRuntime) callconv(.C) ?*c.JSContext {
+        const ctx = c.JS_NewContext(rt) orelse return null;
+        _ = c.js_init_module_std(ctx, "std");
+        _ = c.js_init_module_os(ctx, "os");
+        return ctx;
+    }
+};
 
 const Solution1 = struct {
     runtime: *c.JSRuntime,
