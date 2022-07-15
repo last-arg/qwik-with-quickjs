@@ -8,17 +8,17 @@ const c = @cImport({
 const qwik = @import("qwik_render");
 
 pub fn main() anyerror!void {
-    {
-        var sol1 = try SolutionJsFile.init();
-        defer sol1.deinit();
-    }
-
     // {
-    //     var sol1 = try Solution1.init();
+    //     var sol1 = try SolutionJsFile.init();
     //     defer sol1.deinit();
-    //     // const html = try sol1.getHtmlString();
-    //     // printValue(sol1.ctx, html);
     // }
+
+    {
+        var sol1 = try Solution1.init();
+        defer sol1.deinit();
+        // const html = try sol1.getHtmlString();
+        // printValue(sol1.ctx, html);
+    }
 }
 
 const SolutionJsFile = struct {
@@ -97,14 +97,14 @@ const SolutionJsFile = struct {
         c.JS_FreeContext(self.ctx);
         c.JS_FreeRuntime(self.runtime);
     }
-
-    fn JS_NewCustomContext(rt: ?*c.JSRuntime) callconv(.C) ?*c.JSContext {
-        const ctx = c.JS_NewContext(rt) orelse return null;
-        _ = c.js_init_module_std(ctx, "std");
-        _ = c.js_init_module_os(ctx, "os");
-        return ctx;
-    }
 };
+
+fn JS_NewCustomContext(rt: ?*c.JSRuntime) callconv(.C) ?*c.JSContext {
+    const ctx = c.JS_NewContext(rt) orelse return null;
+    _ = c.js_init_module_std(ctx, "std");
+    _ = c.js_init_module_os(ctx, "os");
+    return ctx;
+}
 
 const Solution1 = struct {
     runtime: *c.JSRuntime,
@@ -117,7 +117,7 @@ const Solution1 = struct {
         const rt = c.JS_NewRuntime() orelse {
             return error.FailedToCreateJSRuntime;
         };
-        // c.JS_SetCanBlock(rt, 1);
+        c.JS_SetMaxStackSize(rt, 0);
 
         const ctx = c.JS_NewContext(rt) orelse {
             return error.FailedToCreateJSContext;
@@ -127,8 +127,11 @@ const Solution1 = struct {
         // NOTE: last arguement '1' means load_only
         c.js_std_eval_binary(ctx, &qwik.qjsc_quickjs_polyfill, qwik.qjsc_quickjs_polyfill_size, 1);
         c.js_std_eval_binary(ctx, &qwik.qjsc_core, qwik.qjsc_core_size, 1);
+        c.js_std_eval_binary(ctx, &qwik.qjsc_root_es_qwik, qwik.qjsc_root_es_qwik_size, 1);
         c.js_std_eval_binary(ctx, &qwik.qjsc_server, qwik.qjsc_server_size, 1);
         c.js_std_eval_binary(ctx, &qwik.qwik_render, qwik.qwik_render_size, 0);
+
+        c.js_std_loop(ctx);
 
         return Self{ .runtime = rt, .ctx = ctx };
     }
