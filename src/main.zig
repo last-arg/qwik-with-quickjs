@@ -131,8 +131,6 @@ const Solution1 = struct {
         c.js_std_eval_binary(ctx, &qwik.qjsc_server, qwik.qjsc_server_size, 1);
         c.js_std_eval_binary(ctx, &qwik.qwik_render, qwik.qwik_render_size, 0);
 
-        c.js_std_loop(ctx);
-
         return Self{ .runtime = rt, .ctx = ctx };
     }
 
@@ -145,38 +143,108 @@ const Solution1 = struct {
 
         const global_obj = c.JS_GetGlobalObject(ctx);
         defer c.JS_FreeValue(ctx, global_obj);
+        // printProperties(ctx, global_obj);
 
-        const jsRenderToString = c.JS_GetPropertyStr(ctx, global_obj, "testFnAsync");
+        // const jsRenderToString = c.JS_GetPropertyStr(ctx, global_obj, "testFnAsync");
+        // const jsRenderToString = c.JS_GetPropertyStr(ctx, global_obj, "render");
+        const jsRenderToString = c.JS_GetPropertyStr(ctx, global_obj, "myRender");
+        print("render fn: ", .{});
+        printValue(ctx, jsRenderToString);
         defer c.JS_FreeValue(ctx, jsRenderToString);
-        const render_promise = c.JS_Call(ctx, jsRenderToString, js_undefined, 0, null);
+        const obj = c.JS_NewObject(ctx);
+        defer c.JS_FreeValue(ctx, obj);
+        {
+            const url_raw: [*:0]const u8 = "http://localhost:8080/";
+            const url = c.JS_NewAtom(ctx, url_raw);
+            const url_val = c.JS_AtomToValue(ctx, url);
+            defer c.JS_FreeValue(ctx, url_val);
+            const url_key = c.JS_NewAtom(ctx, "url");
+            _ = c.JS_SetProperty(ctx, obj, url_key, url_val);
+        }
+        {
+            const manifest_raw: [*:0]const u8 = @embedFile("../dist/q-manifest.json");
+            const manifest = c.JS_NewAtom(ctx, manifest_raw);
+            const manifest_val = c.JS_AtomToValue(ctx, manifest);
+            defer c.JS_FreeValue(ctx, manifest_val);
+            const manifest_key = c.JS_NewAtom(ctx, "manifest");
+            _ = c.JS_SetProperty(ctx, obj, manifest_key, manifest_val);
+        }
+
+        // var render_args = &[_]c.JSValue{obj};
+        // const render_len: c_int = @intCast(c_int, render_args.len);
+        const render_args = null;
+        const render_len: c_int = 0;
+        const render_promise = c.JS_Call(ctx, jsRenderToString, js_undefined, render_len, render_args);
         defer c.JS_FreeValue(ctx, render_promise);
+        print("render promise: ", .{});
+        printValue(ctx, render_promise);
+
         const render_promise_then = c.JS_GetPropertyStr(ctx, render_promise, "then");
         defer c.JS_FreeValue(ctx, render_promise_then);
-        const name = "thenCb";
-        const promise_then_cb = c.JS_NewCFunction(ctx, thenCb, name, name.len);
-        defer c.JS_FreeValue(ctx, promise_then_cb);
-        const call_promise_then = c.JS_Call(ctx, render_promise_then, render_promise, 2, &[_]c.JSValue{
-            promise_then_cb,
-        });
+        const resolve_name = "resolveFn";
+        const resolve_fn = c.JS_NewCFunction(ctx, thenCb, resolve_name, resolve_name.len);
+        defer c.JS_FreeValue(ctx, resolve_fn);
+        const reject_name = "resolveFn";
+        const reject_fn = c.JS_NewCFunction(ctx, thenRejectCb, reject_name, reject_name.len);
+        defer c.JS_FreeValue(ctx, reject_fn);
+
+        var then_args = [_]c.JSValue{ resolve_fn, reject_fn };
+        // const call_promise_then = c.JS_Call(ctx, render_promise_then, render_promise, then_args.len, &then_args);
+        const then_key = c.JS_NewAtom(ctx, "then");
+        const call_promise_then = c.JS_Invoke(ctx, render_promise, then_key, then_args.len, &then_args);
         defer c.JS_FreeValue(ctx, call_promise_then);
+        print("call_promise_then: ", .{});
+        printValue(ctx, call_promise_then);
         c.js_std_loop(ctx);
-        if (result == null) return error.JSStringIsNull;
-        return result.?;
-        // return c.JS_NewInt32(ctx, 1);
+        print("after loop\n", .{});
+        var p1 = c.JS_Invoke(ctx, call_promise_then, then_key, then_args.len, &then_args);
+        printValue(ctx, p1);
+        // while (p1.tag == -1) {
+        //     printValue(ctx, p1);
+        //     c.js_std_loop(ctx);
+        //     p1 = c.JS_Invoke(ctx, p1, then_key, then_args.len, &then_args);
+        // }
+        // printValue(ctx, p1);
+
+        {
+            const ex = c.JS_GetException(ctx);
+            const str = c.JS_ToCString(ctx, ex);
+            print("ex: {s}\n", .{str});
+        }
+
+        // if (result == null) return error.JSStringIsNull;
+        // return result.?;
+        return c.JS_NewInt32(ctx, 1);
     }
 
-    // var js_val: ?c.JSValue = null;
-    // pub const JSCFunction = fn (?*JSContext, JSValue, c_int, [*c]JSValue) callconv(.C) JSValue;
     fn thenCb(ctx: ?*c.JSContext, func: c.JSValue, arg_count: c_int, args: [*c]c.JSValue) callconv(.C) c.JSValue {
+        print("==================\n", .{});
+        print("Resolve callback\n", .{});
         print("func: {d}\n", .{func});
         printValue(ctx, func);
         print("arg_count: {d}\n", .{arg_count});
         var i: usize = 0;
         while (i < arg_count) : (i += 1) {
+            print("val {d} = ", .{i});
             printValue(ctx, args[i]);
         }
         result = args[0];
-        return c.JS_NewInt32(ctx, 1);
+        print("==================\n", .{});
+        return c.JS_NewInt32(ctx, 987);
+    }
+
+    fn thenRejectCb(ctx: ?*c.JSContext, func: c.JSValue, arg_count: c_int, args: [*c]c.JSValue) callconv(.C) c.JSValue {
+        print("==================\n", .{});
+        print("Reject callback\nfunc: ", .{});
+        printValue(ctx, func);
+        print("arg_count: {d}\n", .{arg_count});
+        var i: usize = 0;
+        while (i < arg_count) : (i += 1) {
+            print("val {d} = ", .{i});
+            printValue(ctx, args[i]);
+        }
+        print("==================\n", .{});
+        return c.JS_NewInt32(ctx, 222);
     }
 
     pub fn deinit(self: *Self) void {
